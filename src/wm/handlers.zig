@@ -22,6 +22,7 @@ pub fn handleEvent(event: *xlib.XEvent, wm: *WindowManager) void {
     switch (event_type) {
         .map_request => handleMapRequest(&event.xmaprequest, wm),
         .configure_request => handleConfigureRequest(&event.xconfigurerequest, wm),
+        .configure_notify => handleConfigureNotify(&event.xconfigure, wm),
         .key_press => handleKeyPress(&event.xkey, wm),
         .destroy_notify => handleDestroyNotify(&event.xdestroywindow, wm),
         .unmap_notify => handleUnmapNotify(&event.xunmap, wm),
@@ -191,6 +192,27 @@ fn handleExpose(event: *xlib.XExposeEvent, wm: *WindowManager) void {
     }
 }
 
+fn handleConfigureNotify(event: *xlib.XConfigureEvent, wm: *WindowManager) void {
+    if (event.window != wm.display.root) return;
+
+    const dirty = wm.updateGeom();
+    if (dirty) {
+        wm.rebuildBars();
+        var mon = wm.monitors;
+        while (mon) |m| {
+            var c = m.clients;
+            while (c) |client| {
+                if (client.is_fullscreen) {
+                    tiling.resizeClient(client, m.mon_x, m.mon_y, m.mon_w, m.mon_h);
+                }
+                c = client.next;
+            }
+            core.arrange(m, wm);
+            mon = m.next;
+        }
+    }
+}
+
 fn handleButtonPress(event: *xlib.XButtonEvent, wm: *WindowManager) void {
     std.debug.print("button_press: window=0x{x} subwindow=0x{x}\n", .{ event.window, event.subwindow });
 
@@ -210,6 +232,10 @@ fn handleButtonPress(event: *xlib.XButtonEvent, wm: *WindowManager) void {
         if (clicked_tag) |tag_index| {
             const tag_mask: u32 = @as(u32, 1) << @intCast(tag_index);
             core.view(tag_mask, wm);
+        } else if (bar.handleBlockClick(event.x)) |click_action| {
+            wm.next_spawn_floating = click_action.floating;
+            wm.next_spawn_bypass_rules = click_action.bypass_rules;
+            actions.spawnCommand(wm, click_action.command);
         }
         return;
     }
